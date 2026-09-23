@@ -1,4 +1,4 @@
-* reference: https://github.com/jeonbyeongmin/kbo-cli
+> reference: https://github.com/jeonbyeongmin/kbo-cli
 
 # KBO CLI
 
