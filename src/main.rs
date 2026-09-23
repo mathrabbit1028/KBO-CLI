@@ -7,14 +7,14 @@ use clap::{Args, Parser, Subcommand};
 mod live;
 mod naver;
 
-use live::run_live;
+use live::{Competition, run_live};
 use naver::NaverClient;
 
 #[derive(Debug, Parser)]
 #[command(
     name = "kbo-cli",
     version,
-    about = "네이버 스포츠 KBO 실시간 전광판을 터미널에서 봅니다."
+    about = "네이버 스포츠 KBO·아시안게임 야구 전광판을 터미널에서 봅니다."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -37,6 +37,10 @@ struct Cli {
 enum Command {
     /// 오늘 KBO 전체 경기를 실시간 전광판으로 띄웁니다.
     Live(LiveArgs),
+
+    /// 오늘 아시안게임 야구 전체 경기를 실시간 전광판으로 띄웁니다.
+    #[command(visible_alias = "ag", alias = "asian")]
+    AsianGames(LiveArgs),
 }
 
 #[derive(Clone, Debug, Args)]
@@ -59,18 +63,24 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let client = NaverClient::new()?;
 
+    let (competition, args) = match cli.command {
+        Some(Command::Live(args)) => (Competition::Kbo, args),
+        Some(Command::AsianGames(args)) => (Competition::AsianGames, args),
+        None => (
+            Competition::Kbo,
+            LiveArgs {
+                date: cli.date,
+                interval: cli.interval,
+                once: cli.once,
+            },
+        ),
+    };
+
     let LiveArgs {
         date,
         interval,
         once,
-    } = match cli.command {
-        Some(Command::Live(args)) => args,
-        None => LiveArgs {
-            date: cli.date,
-            interval: cli.interval,
-            once: cli.once,
-        },
-    };
+    } = args;
 
     if interval == 0 {
         bail!("--interval은 1초 이상이어야 합니다");
@@ -79,6 +89,7 @@ async fn main() -> Result<()> {
     let date = date.unwrap_or_else(today_kst);
     run_live(
         &client,
+        competition,
         &date.to_string(),
         Duration::from_secs(interval),
         once,

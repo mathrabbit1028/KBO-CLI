@@ -20,8 +20,45 @@ const GUTTER: usize = 2;
 const TEAM_COL: usize = 7;
 const RESET: &str = "\x1b[0m";
 
+#[derive(Clone, Copy, Debug)]
+pub enum Competition {
+    Kbo,
+    AsianGames,
+}
+
+impl Competition {
+    fn category_id(self) -> &'static str {
+        match self {
+            Self::Kbo => "kbo",
+            Self::AsianGames => "agbaseball",
+        }
+    }
+
+    fn header(self) -> &'static str {
+        match self {
+            Self::Kbo => "KBO LIVE",
+            Self::AsianGames => "ASIAN GAMES BASEBALL",
+        }
+    }
+
+    fn panel_label(self) -> &'static str {
+        match self {
+            Self::Kbo => "KBO",
+            Self::AsianGames => "AG",
+        }
+    }
+
+    fn empty_message(self) -> &'static str {
+        match self {
+            Self::Kbo => "오늘 KBO 경기가 없습니다.",
+            Self::AsianGames => "오늘 아시안게임 야구 경기가 없습니다.",
+        }
+    }
+}
+
 pub async fn run_live(
     client: &NaverClient,
+    competition: Competition,
     date: &str,
     interval: Duration,
     once: bool,
@@ -29,25 +66,31 @@ pub async fn run_live(
     let screen = ScreenGuard::enter()?;
 
     loop {
-        let cards = fetch_cards(client, date).await?;
-        render(date, interval, &cards)?;
+        let cards = fetch_cards(client, competition, date).await?;
+        render(competition, date, interval, &cards)?;
 
         if once {
             break;
         }
 
         match wait_for_tick(interval, screen.interactive()).await? {
-            BoardAction::Refresh => continue,
-            BoardAction::Quit => break,
-            BoardAction::Tick => continue,
+            LiveAction::Refresh => continue,
+            LiveAction::Quit => break,
+            LiveAction::Tick => continue,
         }
     }
 
     Ok(())
 }
 
-async fn fetch_cards(client: &NaverClient, date: &str) -> Result<Vec<GameCard>> {
-    let games = client.kbo_games(date).await?;
+async fn fetch_cards(
+    client: &NaverClient,
+    competition: Competition,
+    date: &str,
+) -> Result<Vec<GameCard>> {
+    let games = client
+        .baseball_games(date, competition.category_id())
+        .await?;
     let mut cards = Vec::with_capacity(games.len());
 
     for (index, game) in games.into_iter().enumerate() {
@@ -61,23 +104,23 @@ async fn fetch_cards(client: &NaverClient, date: &str) -> Result<Vec<GameCard>> 
     Ok(cards)
 }
 
-enum BoardAction {
+enum LiveAction {
     Tick,
     Refresh,
     Quit,
 }
 
-async fn wait_for_tick(interval: Duration, interactive: bool) -> Result<BoardAction> {
+async fn wait_for_tick(interval: Duration, interactive: bool) -> Result<LiveAction> {
     if !interactive {
         sleep(interval).await;
-        return Ok(BoardAction::Tick);
+        return Ok(LiveAction::Tick);
     }
 
     let deadline = Instant::now() + interval;
     loop {
         let now = Instant::now();
         if now >= deadline {
-            return Ok(BoardAction::Tick);
+            return Ok(LiveAction::Tick);
         }
 
         let remaining = deadline.saturating_duration_since(now);
@@ -85,11 +128,11 @@ async fn wait_for_tick(interval: Duration, interactive: bool) -> Result<BoardAct
         if event::poll(poll_for).context("키 입력 대기 실패")? {
             if let Event::Key(key) = event::read().context("키 입력 읽기 실패")? {
                 match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => return Ok(BoardAction::Quit),
+                    KeyCode::Char('q') | KeyCode::Esc => return Ok(LiveAction::Quit),
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        return Ok(BoardAction::Quit);
+                        return Ok(LiveAction::Quit);
                     }
-                    KeyCode::Char('r') => return Ok(BoardAction::Refresh),
+                    KeyCode::Char('r') => return Ok(LiveAction::Refresh),
                     _ => {}
                 }
             }
@@ -388,7 +431,12 @@ struct Bases {
     third: bool,
 }
 
-fn render(date: &str, interval: Duration, cards: &[GameCard]) -> Result<()> {
+fn render(
+    competition: Competition,
+    date: &str,
+    interval: Duration,
+    cards: &[GameCard],
+) -> Result<()> {
     let (terminal_width, height) = terminal_size();
     let width = terminal_width.saturating_sub(1).max(1);
     let columns = 3;
@@ -408,7 +456,7 @@ fn render(date: &str, interval: Duration, cards: &[GameCard]) -> Result<()> {
     out.push_str(&fit(
         &format!(
             "{} {}",
-            bold("KBO LIVE"),
+            bold(competition.header()),
             dim(&format!(
                 "· {date} · {now} KST · refresh {}s · q:종료 r:새로고침",
                 interval.as_secs(),
@@ -419,14 +467,15 @@ fn render(date: &str, interval: Duration, cards: &[GameCard]) -> Result<()> {
     out.push('\n');
 
     if cards.is_empty() {
-        out.push_str("오늘 KBO 경기가 없습니다.\n");
+        out.push_str(competition.empty_message());
+        out.push('\n');
         write_screen(out)?;
         return Ok(());
     }
 
     let panels = cards
         .iter()
-        .map(|card| render_panel(card, cell_width, panel_height))
+        .map(|card| render_panel(card, competition, cards.len(), cell_width, panel_height))
         .collect::<Vec<_>>();
 
     append_grid_row(&mut out, &panels, 0, 3, cell_width, panel_height);
@@ -475,10 +524,16 @@ fn append_grid_row(
     }
 }
 
-fn render_panel(card: &GameCard, width: usize, panel_height: usize) -> Vec<String> {
+fn render_panel(
+    card: &GameCard,
+    competition: Competition,
+    game_count: usize,
+    width: usize,
+    panel_height: usize,
+) -> Vec<String> {
     let inner = width.saturating_sub(2);
     let body_height = panel_height.saturating_sub(5);
-    let title = format!("{} · {}", dim("KBO"), status_text(card));
+    let title = format!("{} · {}", dim(competition.panel_label()), status_text(card));
     let footer = dim(&format!("q:종료  r:새로고침 · {}", kst_now()));
     let mut body = panel_body(card, inner.saturating_sub(2), body_height);
     body.resize(body_height, String::new());
@@ -504,7 +559,7 @@ fn render_panel(card: &GameCard, width: usize, panel_height: usize) -> Vec<Strin
     lines.push(fit(
         &format!(
             "{} {} {}",
-            dim(&format!("[{}/{}]", card.index + 1, 5)),
+            dim(&format!("[{}/{}]", card.index + 1, game_count)),
             card.game.away_team_name,
             dim(&format!("vs {}", card.game.home_team_name))
         ),
@@ -875,6 +930,14 @@ fn team_rgb(team: &str) -> Option<(u8, u8, u8)> {
         "롯데" => Some((4, 30, 66)),
         "NC" => Some((49, 82, 136)),
         "키움" => Some((87, 5, 20)),
+        "대한민국" => Some((0, 71, 160)),
+        "일본" => Some((188, 0, 45)),
+        "중국" => Some((222, 41, 16)),
+        "차이니스 타이베이" => Some((0, 51, 160)),
+        "홍콩" => Some((222, 41, 16)),
+        "태국" => Some((36, 29, 112)),
+        "필리핀" => Some((0, 56, 168)),
+        "팔레스타인" => Some((0, 122, 61)),
         _ => None,
     }
 }

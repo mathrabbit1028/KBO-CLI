@@ -43,7 +43,7 @@ impl NaverClient {
         Ok(Self { http })
     }
 
-    pub async fn kbo_games(&self, date: &str) -> Result<Vec<Game>> {
+    pub async fn baseball_games(&self, date: &str, category_id: &str) -> Result<Vec<Game>> {
         let url = format!("{API_BASE}/schedule/games");
         let result: ScheduleResult = self
             .get(
@@ -51,13 +51,13 @@ impl NaverClient {
                 &[
                     ("fields", SCHEDULE_FIELDS),
                     ("upperCategoryId", "kbaseball"),
-                    ("categoryId", "kbo"),
+                    ("categoryId", category_id),
                     ("fromDate", date),
                     ("toDate", date),
                     ("size", "500"),
                 ],
                 Some(&format!(
-                    "{MOBILE_BASE}/kbaseball/schedule/index?date={date}&category=kbo"
+                    "{MOBILE_BASE}/kbaseball/schedule/index?date={date}&category={category_id}"
                 )),
             )
             .await?;
