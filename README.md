@@ -1,3 +1,5 @@
+* reference: https://github.com/jeonbyeongmin/kbo-cli
+
 # KBO CLI
 
 네이버 스포츠의 공개 JSON 응답을 사용해 KBO와 아시안게임 야구 실시간 전광판을 터미널에서 보는 Rust CLI입니다.
